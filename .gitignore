@@ -1,0 +1,12 @@
+.vscode/*.vc*
+__pycache__
+
+build
+devel
+
+src/wpr_simulation
+src/wpb_home
+src/waterplus_map_tools
+src/rplidar_ros
+src/xfyun_waterplus
+src/iai_kinect2

@@ -1,0 +1,16 @@
+<launch>
+    <!-- 启动导航节点 -->
+    <node name="nav_node" pkg="Aft_g1" type="nave_node.py" output="screen" />
+    
+    <!-- 启动导航控制节点 -->
+    <node name="nav_control" pkg="Aft_g1" type="nav_control.py" output="screen" />
+    
+    <!-- 启动机器人控制节点 -->
+    <node name="robot_control" pkg="Aft_g1" type="robot_control.py" output="screen" />
+    
+    <!-- 启动导航错误监控节点 -->
+    <node name="nav_error" pkg="Aft_g1" type="nav_error.py" output="screen" />
+    
+    <!-- 设置节点运行权限 -->
+    <node name="chmod_nodes" pkg="Aft_g1" type="chmod_nodes.sh" output="screen" />
+</launch> 

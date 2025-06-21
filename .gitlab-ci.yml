@@ -1,0 +1,102 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+stages:
+  - build
+  - test
+  - deploy
+
+build_production:
+  stage: build
+  only:
+    - master
+  script:
+    - apt-get update
+    - apt-get install -y python3-pip clang-format ros-noetic-roslint
+    - pip3 install pylint
+    - catkin_make
+
+build_develop:
+  stage: build
+  only:
+    - develop
+  script:
+    - apt-get update
+    - apt-get install -y python3-pip clang-format ros-noetic-roslint
+    - pip3 install pylint
+    - catkin_make
+
+build_merge_requests:
+  stage: build
+  only:
+    refs:
+      - merge_requests
+  script:
+    - apt-get update
+    - apt-get install -y python3-pip clang-format ros-noetic-roslint
+    - pip3 install pylint
+    - catkin_make
+
+test_style:
+  stage: test
+  only:
+    - master
+    - develop
+    - merge_requests
+  script:
+    # 安装catkin_lint
+    - apt-get install -y python3-catkin-lint
+
+    # C++代码风格检查
+    - |
+      find . -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \
+      -not -path "./build/*" \
+      -not -path "./devel/*" \
+      -not -path "./install/*" | while read file; do
+        if [ -f "$file" ]; then
+          clang-format -i --style=Google "$file"
+        fi
+      done
+    - git diff --exit-code || (echo "C++代码需要格式化，请在本地运行clang-format" && exit 1)
+    
+    # Python代码风格检查
+    - |
+      find . -name "*.py" \
+      -not -path "./build/*" \
+      -not -path "./devel/*" \
+      -not -path "./install/*" \
+      -type f | while read file; do
+        pylint --rcfile=.pylintrc "$file" || exit 1
+      done
+    
+    # ROS代码检查
+    - source /opt/ros/noetic/setup.bash
+    - catkin_make roslint
+    
+    # Catkin工程检查
+    - catkin_lint --strict --explain src/
+
+test_functionality:
+  stage: test
+  only:
+    - master
+    - develop
+    - merge_requests
+  script:
+    - source /opt/ros/noetic/setup.bash
+    - catkin_make run_tests
+    - catkin_test_results
+
+deploy_production:
+  stage: deploy
+  only:
+    - master
+  script:
+    - echo "deploy"
+
+deploy_develop:
+  stage: deploy
+  only:
+    - develop
+  script:
+    - echo "部署到开发环境" 

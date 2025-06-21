@@ -1,0 +1,69 @@
+<launch>
+  <!-- 加载仿真环境（从G1049.launch复制） -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find Aft_g1)/worlds/G1049_r3.world"/>
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="recording" value="false"/>
+    <arg name="debug" value="false"/>
+  </include>
+
+  <!-- 加载WPB_HOME控制器 -->
+  <include file="$(find wpr_simulation)/launch/wpb_home_controllers.launch"/>
+
+  <!-- 启动SLAM建图相关组件 -->
+  <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping">
+    <param name="base_frame" value="base_footprint"/>
+    <param name="xmin" value="-6.5"/>
+    <param name="ymin" value="-6.5"/>
+    <param name="xmax" value="6.5"/>
+    <param name="ymax" value="6.5"/>
+    <param name="maxUrange" value="10.0"/>
+    <param name="delta" value="0.03"/>
+    <param name="map_update_interval" value="2.5"/>
+  </node>
+
+  <node name="map_server" pkg="map_server" type="map_server" args="/home/robot/maps/wxm.yaml"/>
+  <!-- 启动Aft_g1项目的所有节点 -->
+  <node pkg="Aft_g1" name="action_control" type="action_control.py" />
+  <node pkg="Aft_g1" name="mapping_control" type="mapping_control.py" />
+  <node pkg="Aft_g1" name="abs_pos" type="abs_pos.py" />
+  <node pkg="Aft_g1" name="cur_pos" type="cur_pos.py" />
+  <node pkg="Aft_g1" name="nav_control_node" type="nav_control_node.py" />
+  <node pkg="Aft_g1" name="nav_node" type="nav_node.py" />
+  <node pkg="Aft_g1" name="nav_error" type="nav_error.py" />
+  <node pkg="Aft_g1" name="arm_controller" type="arm_controller.py" />
+  <node pkg="Aft_g1" name="master_node" type="master_node.py" />
+  <node pkg="Aft_g1" name="pose_transf" type="pose_transf.py" respawn="true" respawn_delay="5"/>
+  <node pkg="Aft_g1" name="pose_error" type="pose_error.py" />
+  <node pkg="Aft_g1" name="warning_sound" type="warning_sound.py" />
+  <node pkg="Aft_g1" name="image_detect" type="image_detect.py" />
+
+  <!-- 启动move_base导航组件（但不加载地图） -->
+  <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <rosparam file="$(find wpb_home_tutorials)/nav_lidar/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="$(find wpb_home_tutorials)/nav_lidar/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <rosparam file="$(find wpb_home_tutorials)/nav_lidar/local_costmap_params.yaml" command="load" />
+    <rosparam file="$(find wpb_home_tutorials)/nav_lidar/global_costmap_params.yaml" command="load" />
+    <rosparam file="$(find wpb_home_tutorials)/nav_lidar/local_planner_params.yaml" command="load" />
+    <param name="base_global_planner" value="global_planner/GlobalPlanner" />
+    <param name="use_dijkstra" value="true"/>
+    <param name="base_local_planner" value="wpbh_local_planner/WpbhLocalPlanner" />
+    <param name="controller_frequency" value="10" type="double"/>
+  </node>
+
+  <!-- 运行RViz可视化界面 -->
+  <arg name="model" default="$(find wpb_home_bringup)/urdf/wpb_home.urdf"/>
+  <arg name="gui" default="false" />
+  <arg name="rvizconfig" default="$(find wpr_simulation)/rviz/slam.rviz" />
+
+  <param name="robot_description" command="$(find xacro)/xacro $(arg model)" />
+  <param name="use_gui" value="$(arg gui)"/>
+
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" >
+    <rosparam command="load" file="$(find wpb_home_bringup)/config/wpb_home.yaml" />
+  </node>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rvizconfig)" required="true" />
+</launch> 
