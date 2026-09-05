@@ -1,5 +1,27 @@
 # 扫荡北航先锋-ROS端
 
+## 独立 Conda 测试环境
+
+```bash
+conda env create -f environment.yml
+conda activate ros-buaa-noetic
+catkin_make -DPYTHON_EXECUTABLE="$CONDA_PREFIX/bin/python" -j2
+source devel/setup.bash
+pytest -q
+roscore
+```
+
+另一个激活相同环境、加载 `devel/setup.bash` 的终端可运行：
+
+```bash
+roslaunch rosbridge_server rosbridge_websocket.launch address:=127.0.0.1 port:=9090
+```
+
+此环境使用 RoboStack Noetic，支持在 Debian 上编译本仓库的消息、服务和运行节点。
+`empy<4` 是 ROS 1 C++ 消息生成器的兼容性约束。
+`PYTHONNOUSERSITE=1` 避免用户目录中其它项目的 Python 依赖进入测试环境。
+真实机器人启动文件仍依赖 WPB_HOME、激光雷达和 Kinect 驱动及硬件。
+
 本项目是北京航空航天大学软件工程小组作业的ROS端代码仓库，用于实现机器人的自主建图、导航、数据采集等功能，并能通过`rosbridge`与云端后端进行通信，接收指令并上报数据。
 
 ## 1. ROS端功能介绍

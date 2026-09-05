@@ -1,0 +1,21 @@
+name: ros-buaa-noetic
+channels:
+  - robostack-noetic
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - ros-noetic-ros-base
+  - ros-noetic-cv-bridge
+  - ros-noetic-image-transport
+  - ros-noetic-tf
+  - ros-noetic-move-base-msgs
+  - ros-noetic-rosbridge-suite
+  - catkin_tools
+  - empy<4
+  - cmake<4
+  - make
+  - compilers
+  - pytest
+variables:
+  PYTHONNOUSERSITE: "1"

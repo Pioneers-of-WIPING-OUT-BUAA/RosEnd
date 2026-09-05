@@ -3,6 +3,10 @@ __pycache__
 
 build
 devel
+logs/
+.catkin_tools/
+.pytest_cache/
+src/CMakeLists.txt
 
 src/wpr_simulation
 src/wpb_home
