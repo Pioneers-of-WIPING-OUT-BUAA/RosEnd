@@ -26,6 +26,7 @@ class ActionControlNode:
         rospy.init_node('act_ctrl')
 
         self.is_grab = False
+        self.grab_cancel = threading.Event()
         self.direction = 0
         self.speed = 0.0
         self.command = ""
@@ -50,6 +51,16 @@ class ActionControlNode:
         op = msg.op
         self.control = msg
 
+        if msg.direction in (0, ARM_STOP):
+            self.grab_cancel.set()
+            self.direction = msg.direction
+            self.speed = 0.0
+            if msg.direction == ARM_STOP:
+                self.control_arm(ARM_STOP)
+            else:
+                self.handle_manual_control()
+            return
+
         if not self.is_grab:
             self.direction = msg.direction
             # 运动控制
@@ -59,7 +70,9 @@ class ActionControlNode:
             # 兼容原有抓取流程
             elif op == 2:
                 if self.direction == 7:
-                    self.grab_object()
+                    self.is_grab = True
+                    self.grab_cancel.clear()
+                    threading.Thread(target=self.grab_object, daemon=True).start()
                 else:
                     self.control_arm(self.direction)
 
@@ -119,7 +132,8 @@ class ActionControlNode:
             js.velocity = [0.5, 5.0]  # lift speed 0.5m/s, gripper 5deg/s
             self.ctrl_pub_mani.publish(js)
             rospy.loginfo("Published grab action command to /wpb_home/mani_ctrl")
-            rospy.sleep(3)
+            if self.grab_cancel.wait(3):
+                return
 
             result_pub = rospy.Publisher("/wpb_home/grab_result", std_msgs.msg.String, queue_size=1)
             msg = std_msgs.msg.String()
@@ -172,10 +186,7 @@ class ActionControlNode:
             js.position = [current_lift, current_gripper]
             js.velocity = [0.0, 0.0]
             rospy.loginfo("Arm stop (force current position as target, publish multiple times)")
-            for _ in range(5):
-                rospy.logwarn("[debug] publish arm stop round %d", _)
-                self.ctrl_pub_mani.publish(js)
-                rospy.sleep(0.05)
+            self.ctrl_pub_mani.publish(js)
             return
         else:
             rospy.logwarn("Unknown arm action type: %s", action_type)
@@ -183,7 +194,6 @@ class ActionControlNode:
 
         self.ctrl_pub_mani.publish(js)
         rospy.loginfo(f"Arm action published: {action_type}, position={js.position}, velocity={js.velocity}")
-        rospy.sleep(2)
 
     def run(self):
         rospy.loginfo("robot control node start running")

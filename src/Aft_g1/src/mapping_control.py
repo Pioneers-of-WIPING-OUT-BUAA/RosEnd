@@ -4,6 +4,7 @@ from geometry_msgs.msg import Twist
 from Aft_g1.msg import MappingCmd
 import os
 import subprocess
+from map_files import save_map
 
 linear_vel = 0.1
 angular_vel = 0.1
@@ -54,14 +55,13 @@ def chatter_callback(cmd):
         elif flag and cmd.cmdId == 2:
             rospy.loginfo("mapping cancelled!")
             flag = 0
-            os.system("rosnode kill gmapping")
+            cmd_vel_pub.publish(Twist())
             # os.system("rosnode kill robot_state_publisher")
             # os.system("killall -9 rviz")
             
         elif flag and cmd.cmdId == 3:
-            map_path = f"/home/robot/maps/{cmd.graphName}"
-            os.system(f"rosrun map_server map_saver -f {map_path}")
-            rospy.loginfo(f"Map saved to {map_path}")
+            target = save_map(cmd.graphName, rospy.get_param("~maps_dir", "/home/robot/maps"))
+            rospy.loginfo(f"Map saved to {target}")
 
 def main():
     global cmd_vel_pub

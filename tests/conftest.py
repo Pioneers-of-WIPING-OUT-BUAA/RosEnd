@@ -3,10 +3,15 @@ import signal
 import socket
 import subprocess
 import time
+import sys
+from pathlib import Path
 
 import pytest
 import rosgraph
 import rospy
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "Aft_g1" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 @pytest.fixture(scope="session")

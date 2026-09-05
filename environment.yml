@@ -10,6 +10,7 @@ dependencies:
   - ros-noetic-image-transport
   - ros-noetic-tf
   - ros-noetic-move-base-msgs
+  - ros-noetic-map-server
   - ros-noetic-rosbridge-suite
   - catkin_tools
   - empy<4
@@ -17,5 +18,6 @@ dependencies:
   - make
   - compilers
   - pytest
+  - requests
 variables:
   PYTHONNOUSERSITE: "1"

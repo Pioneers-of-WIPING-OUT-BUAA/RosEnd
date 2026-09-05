@@ -22,6 +22,27 @@ roslaunch rosbridge_server rosbridge_websocket.launch address:=127.0.0.1 port:=9
 `PYTHONNOUSERSITE=1` 避免用户目录中其它项目的 Python 依赖进入测试环境。
 真实机器人启动文件仍依赖 WPB_HOME、激光雷达和 Kinect 驱动及硬件。
 
+`pytest -q` 包含真实 `roscore` 下的节点测试：模拟 `move_base` 动作服务，验证
+航点顺序、取消目标、地图服务器和地图保存；同时创建相邻后端环境后，还会验证
+Django 经 ROSBridge 的两轮连接、控制和断开。测试会清理启动的 ROS 进程。
+这些测试验证控制协议和状态管理，不替代底盘、规划器与传感器的实机测试。
+
+导航目标统一由 `nav_node.py` 下发，`loop=0` 执行一轮，`loop=1` 持续循环；
+退出导航仅取消任务，不再下发返航目标。目标超时参数为 `~goal_timeout`，默认 120 秒。
+`master_node.py` 和 `nav_control_node.py` 的 `~maps_dir` 必须指向同一地图目录，
+默认为 `/home/robot/maps`。地图保存使用参数数组调用 `map_saver`，保存成功后才返回。
+自动生成的 `src/CMakeLists.txt` 链接已忽略，避免提交本机 Conda 的绝对路径。
+
+相机回调仅保留最新图像及其采集位置，定时编码默认每 5 秒一次，最多保留 3 张。
+可配置 `~image_dir`、`~image_interval` 和 `~max_saved_images`。
+独立上传进程通过 `ROS_IMAGE_DIR` 和 `ROS_BACKEND_URL` 配置目录和后端地址：
+
+```bash
+ROS_IMAGE_DIR=/tmp/img ROS_BACKEND_URL=http://127.0.0.1:8000/api python img_send.py
+```
+
+上传失败会保留重试机会，下一轮仍上传最新图像，避免积压过期画面。
+
 本项目是北京航空航天大学软件工程小组作业的ROS端代码仓库，用于实现机器人的自主建图、导航、数据采集等功能，并能通过`rosbridge`与云端后端进行通信，接收指令并上报数据。
 
 ## 1. ROS端功能介绍

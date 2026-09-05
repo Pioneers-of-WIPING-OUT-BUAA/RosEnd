@@ -6,6 +6,7 @@ import os
 import subprocess
 from geometry_msgs.msg import Twist
 from Aft_g1.msg import MappingCmd
+from map_files import save_map
 
 class MapController:
     """
@@ -82,10 +83,7 @@ class MapController:
                 # subprocess.call(["rosnode", "kill", "gmapping"])
             # 命令3: 保存地图
             elif self.flag and cmd.cmdId == 3:
-                save_path = f"/home/robot/maps/{cmd.graphName}"
-                save_cmd = f"rosrun map_server map_saver -f {save_path}"
-                rospy.loginfo(save_cmd)
-                subprocess.call(save_cmd, shell=True)
+                save_map(cmd.graphName, rospy.get_param("~maps_dir", "/home/robot/maps"))
                 rospy.loginfo("Map saved!")
 
     def run(self):

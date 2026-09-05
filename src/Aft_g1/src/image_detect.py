@@ -81,7 +81,7 @@ class ImageDetector:
 
         # 创建发布者和订阅者
         self.pub = rospy.Publisher('/sound_detect', SoundMsg, queue_size=10)
-        self.sub = rospy.Subscriber('/kinect2/hd/image_color_rect', Image, self.image_callback)
+        self.sub = rospy.Subscriber('/kinect2/hd/image_color_rect', Image, self.image_callback, queue_size=1, buff_size=16777216)
 
         # 上次处理时间
         self.last_time = 0
@@ -90,10 +90,8 @@ class ImageDetector:
 
     def image_callback(self, msg):
         # 控制处理频率
-        current_time = time.time()
+        current_time = time.monotonic()
         if current_time - self.last_time < 2:
-            if current_time - self.last_time < 1:
-                time.sleep(1)
             return
         self.last_time = current_time
 

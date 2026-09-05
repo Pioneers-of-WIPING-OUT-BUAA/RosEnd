@@ -14,8 +14,9 @@ import threading
 import time
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-import requests
 import json
+from pathlib import Path
+from map_files import map_path, save_map
 
 # 状态定义
 STATE_IDLE = 0
@@ -44,6 +45,7 @@ PICK_TRIGGER = 40
 PICK_ABORT = 41
 
 state = STATE_IDLE
+state_lock = threading.RLock()
 
 # 全局变量定义
 origin_x = 0.0
@@ -64,30 +66,37 @@ pos_lock = threading.Lock()
 
 # 图片保存路径
 IMG_SAVE_DIR = "/tmp/img"
-if not os.path.exists(IMG_SAVE_DIR):
-    os.makedirs(IMG_SAVE_DIR)
+MAX_SAVED_IMAGES = 3
 
 
 # 图片回调，保存最新图片
 def image_callback(msg):
     global latest_image
+    with pos_lock:
+        pos = current_pos.copy()
     with image_lock:
-        latest_image = msg
+        latest_image = (msg, time.time_ns(), pos)
 
-    global current_pos
+
+def save_latest_image(event=None):
+    global latest_image
+    with image_lock:
+        sample = latest_image
+        latest_image = None
+    if sample is None:
+        return
+    msg, timestamp, pos = sample
     try:
         cv_image = bridge.imgmsg_to_cv2(msg, "bgr8")
-        timestamp = int(time.time())
-        # 加锁读取current_pos，防止并发问题
-        with pos_lock:
-            pos = current_pos.copy()
-        filename = f"{IMG_SAVE_DIR}/{timestamp}_{pos[0]}_{pos[1]}_{pos[2]}.jpg"
-        success = cv2.imwrite(filename, cv_image)
-        if success:
-            # rospy.loginfo(f"[master_node] Image saved: {filename}")
-            pass
-        else:
-            rospy.logerr(f"[master_node] Failed to save image: {filename}")
+        directory = Path(IMG_SAVE_DIR)
+        directory.mkdir(parents=True, exist_ok=True)
+        filename = directory / f"{timestamp}_{pos[0]}_{pos[1]}_{pos[2]}.jpg"
+        temporary = directory / f".{timestamp}.tmp.jpg"
+        if not cv2.imwrite(str(temporary), cv_image):
+            raise OSError("Could not encode camera image")
+        os.replace(temporary, filename)
+        for old in sorted(directory.glob("[0-9]*_*.jpg"), reverse=True)[MAX_SAVED_IMAGES:]:
+            old.unlink(missing_ok=True)
     except Exception as e:
         rospy.logerr(f"[master_node] Error saving image: {e}")
 
@@ -129,23 +138,22 @@ def GetOrigin(file_name):
 
 def try_state_transition(valid_state, action_func, *args, **kwargs):
     """
-    如果当前状态不是valid_state，先切回IDLE再重试一次目标操作。
+    仅在当前状态允许该操作时执行，不修改被拒绝请求的状态。
     action_func: 目标操作函数
     """
     # return action_func(*args, **kwargs)
     global state
     if state != valid_state:
-        rospy.logwarn(f"[debug] not in valid state, now in {state}, valid state is {valid_state}, return to IDLE and retry")
-        state = STATE_IDLE
-        # 再次尝试
-        if state == valid_state:
-            return action_func(*args, **kwargs)
-        else:
-            return False, None
-    else:
-        return action_func(*args, **kwargs)
+        rospy.logwarn(f"Rejected command in state {state}; expected {valid_state}")
+        return False, None
+    return action_func(*args, **kwargs)
 
 def master_node_callback(req):
+    with state_lock:
+        return _master_node_callback(req)
+
+
+def _master_node_callback(req):
     """
     回调函数，根据请求类型处理不同指令并通过各个话题发布消息
     """
@@ -197,12 +205,11 @@ def master_node_callback(req):
     def mapping_save_action():
         nonlocal res
         rospy.loginfo(f"[debug] mapping_save_action, state={state}")
-        msg = MappingCmd()
-        msg.isCmd = True
-        msg.cmdId = 3
-        msg.graphName = req.navigation_ctrl_msg.name_list[0]
-        mapping_pub.publish(msg)
-        rospy.loginfo("Saving map: %s", msg.graphName)
+        if not req.navigation_ctrl_msg.name_list:
+            raise ValueError("Map name is required")
+        name = req.navigation_ctrl_msg.name_list[0]
+        save_map(name, rospy.get_param("~maps_dir", "/home/robot/maps"))
+        rospy.loginfo("Saved map: %s", name)
         res.code = 0
         return True, res
 
@@ -210,14 +217,18 @@ def master_node_callback(req):
         global state
         nonlocal res
         old_state = state
-        state = STATE_NAVIGATION
-        
-        res.code = 0
         msg = NavControl()
         msg.op = 0
+        if not req.navigation_ctrl_msg.name_list:
+            raise ValueError("Map name is required")
         msg.map_name = req.navigation_ctrl_msg.name_list[0]
+        yaml_path = map_path(msg.map_name, rospy.get_param("~maps_dir", "/home/robot/maps"), ".yaml")
+        if not yaml_path.is_file():
+            raise ValueError("Map file does not exist")
+        state = STATE_NAVIGATION
+        res.code = 0
         rospy.loginfo(f"[debug] navigation_start_action, from {old_state} to {STATE_NAVIGATION} {msg.map_name}")
-        yaml_name = "/home/robot/maps/" + msg.map_name + ".yaml"
+        yaml_name = str(yaml_path)
         GetOrigin(yaml_name)
         res.pose.position.x = origin_x
         res.pose.position.y = origin_y
@@ -247,6 +258,8 @@ def master_node_callback(req):
     def navigation_patrol_action():
         nonlocal res
         rospy.loginfo(f"[debug] navigation_patrol_action, state={state}, waypoints={len(req.navigation_ctrl_msg.name_list)}")
+        if not req.navigation_ctrl_msg.pose_list or len(req.navigation_ctrl_msg.pose_list) != len(req.navigation_ctrl_msg.name_list):
+            raise ValueError("A nonempty path with matching names and poses is required")
         msg = NavControl()
         msg.op = 2
         msg.poses = req.navigation_ctrl_msg.pose_list
@@ -319,6 +332,9 @@ def master_node_callback(req):
     try:
         if req.type == FORCE_STOP:
             state = STATE_IDLE
+            navigation_pub.publish(NavControl(op=3))
+            mapping_pub.publish(MappingCmd(isCmd=True, cmdId=2))
+            action_pub.publish(NavControl(op=1, direction=0, speed=0))
             try:
                 stop_msg = Twist()
                 vel_pub.publish(stop_msg)
@@ -330,6 +346,9 @@ def master_node_callback(req):
 
         elif req.type == ROS_EXIT:
             state = STATE_IDLE
+            navigation_pub.publish(NavControl(op=3))
+            mapping_pub.publish(MappingCmd(isCmd=True, cmdId=2))
+            action_pub.publish(NavControl(op=1, direction=0, speed=0))
             try:
                 stop_msg = Twist()
                 vel_pub.publish(stop_msg)
@@ -346,6 +365,8 @@ def master_node_callback(req):
                 res.msg = "状态转移失败，无法进入建图模式"
 
         elif req.type == MAPPING_END:
+            if state == STATE_IDLE:
+                return res
             ok, r = try_state_transition(STATE_MAPPING, mapping_end_action)
             if not ok:
                 res.code = 1
@@ -370,6 +391,8 @@ def master_node_callback(req):
                 res.msg = "状态转移失败，无法进入导航模式"
 
         elif req.type == NAVIGATION_END:
+            if state == STATE_IDLE:
+                return res
             ok, r = try_state_transition(STATE_NAVIGATION, navigation_end_action)
             if not ok:
                 res.code = 1
@@ -382,6 +405,8 @@ def master_node_callback(req):
                 res.msg = "状态转移失败，无法巡逻"
 
         elif req.type == NAVIGATION_STOP:
+            if state == STATE_IDLE:
+                return res
             ok, r = try_state_transition(STATE_NAVIGATION, navigation_stop_action)
             if not ok:
                 res.code = 1
@@ -396,8 +421,9 @@ def master_node_callback(req):
         elif req.type == USER_VOICE_CMD:
             # 语音指令支持IDLE和NAVIGATION
             if state not in [STATE_IDLE, STATE_NAVIGATION]:
-                rospy.logwarn("[auto] 状态不对，自动切回IDLE并重试语音指令")
-                state = STATE_IDLE
+                res.code = 1
+                res.msg = "当前模式不接受语音导航"
+                return res
             ok, r = user_voice_cmd_action()
             if not ok:
                 res.code = 1
@@ -436,7 +462,10 @@ if __name__ == '__main__':
         navigation_pub = rospy.Publisher("/nav", NavControl, queue_size=10)
         action_pub = rospy.Publisher("/act", NavControl, queue_size=10)
 
-        rospy.Subscriber("/kinect2/hd/image_color_rect", Image, image_callback)
+        IMG_SAVE_DIR = rospy.get_param("~image_dir", "/tmp/img")
+        MAX_SAVED_IMAGES = max(1, int(rospy.get_param("~max_saved_images", 3)))
+        rospy.Subscriber("/kinect2/hd/image_color_rect", Image, image_callback, queue_size=1, buff_size=16777216)
+        rospy.Timer(rospy.Duration(max(0.1, float(rospy.get_param("~image_interval", 5)))), save_latest_image)
         # 订阅amcl_pose，获取机器人当前位置
         rospy.Subscriber("/amcl_pose", PoseWithCovarianceStamped, amcl_pose_callback)
 

@@ -187,6 +187,7 @@ catkin_install_python(PROGRAMS
   src/map_ctrl.py
   src/mapping_control.py
   src/master_node.py
+  src/map_files.py
   src/nav_control_node.py
   src/nav_node.py
   src/nav_error.py

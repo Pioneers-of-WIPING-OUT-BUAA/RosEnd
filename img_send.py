@@ -1,91 +1,77 @@
-import os
 import json
-import requests
+import logging
+import math
+import os
+from pathlib import Path
+import threading
 import time
 
-IMG_SAVE_DIR = "/tmp/img"
+import requests
 
 
-def upload_loop():
+IMG_SAVE_DIR = os.environ.get("ROS_IMAGE_DIR", "/tmp/img")
+BACKEND_URL = os.environ.get("ROS_BACKEND_URL", "http://127.0.0.1:8000/api").rstrip("/")
+logger = logging.getLogger(__name__)
+
+
+def image_position(filename):
+    parts = Path(filename).stem.split("_")
+    if len(parts) != 4:
+        raise ValueError("Image filename must contain a timestamp and three coordinates")
+    pos = [float(value) for value in parts[1:]]
+    if not all(math.isfinite(value) for value in pos):
+        raise ValueError("Image coordinates must be finite")
+    return pos
+
+
+def upload_loop(stop_event=None, interval=5):
+    stop_event = stop_event or threading.Event()
     last_uploaded = None
-    while True:
-        time.sleep(5)
-        try:
-            files = sorted(os.listdir(IMG_SAVE_DIR), reverse=True)
-            if not files:
+    with requests.Session() as session:
+        while not stop_event.wait(interval):
+            files = sorted(Path(IMG_SAVE_DIR).glob("[0-9]*_*.jpg"), reverse=True)
+            if not files or files[0] == last_uploaded:
                 continue
-            latest_file = os.path.join(IMG_SAVE_DIR, files[0])
-            if latest_file == last_uploaded:
-                continue
-            
-            pos_list = (latest_file.split(".")[0]).split("_")
-            pos = [float(pos_list[1]), float(pos_list[2]), float(pos_list[3])]
-
-            img_send(latest_file, pos)
-            print(f"[master_node] uploaded image: {latest_file}")
-            last_uploaded = latest_file
-        except Exception as e:
-            print(f"[master_node] upload_loop error: {e}")
+            latest = files[0]
+            try:
+                result = img_send(latest, image_position(latest), session)
+                if result is not None:
+                    last_uploaded = latest
+            except (ValueError, OSError):
+                logger.exception("Could not read the latest image")
 
 
-def img_send(filename, pos=[0, 0, 0]):
-    """
-    result: 检测结果
-        0: 未检测到异常
-        1: 检测到火焰
-        2: 检测到烟雾
-        3: 检测到陌生人
-    """
+def img_send(filename, pos=None, session=None):
+    pos = [0, 0, 0] if pos is None else pos
+    if not isinstance(pos, list) or len(pos) != 3 or not all(type(value) in (int, float) and math.isfinite(value) for value in pos):
+        raise ValueError("Position must contain three finite numbers")
+    path = Path(filename)
     try:
-        url = 'http://10.212.30.237:8000/api/detect/upload'
-
-        if not os.path.exists(filename):
-            print(f"Error: File {filename} does not exist")
-            return 0
-
-        if not isinstance(pos, list) or len(pos) != 3:
-            print(f"Warning: Invalid position format {pos}, using default [0, 0, 0]")
-            pos = [0, 0, 0]
-
-        with open(filename, "rb") as f:
-            files = {"file": (os.path.basename(filename), f, "image/jpeg")}
-            data = {"pos": json.dumps(pos)}
-            res = requests.post(url=url, files=files, data=data)
-
-        res_data = json.loads(res.text)
-
-        exist_fire, exist_smoke, exist_stranger, exist_rubbish = False, False, False, False
-        if res_data.get("fire", False):
-            exist_fire = True
-        if res_data.get("smoke", False):
-            exist_smoke = True
-        if res_data.get("stranger", False):
-            exist_stranger = True
-        if res_data.get("rubbish", False):
-            exist_rubbish = True
-
-        result_dict= {
-          "pos": pos,
-          "time": time.strftime('%Y-%m-%d %H:%M:%S'),
-          "exist_fire": exist_fire,
-          "exist_smoke": exist_smoke,
-          "exist_stranger": exist_stranger,
-          "exist_rubbish": exist_rubbish,
-          "filename": filename
+        with path.open("rb") as image:
+            response = (session or requests).post(
+                BACKEND_URL + "/detect/upload",
+                files={"file": (path.name, image, "image/jpeg")},
+                data={"pos": json.dumps(pos)},
+                timeout=(5, 45),
+            )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or not all(key in data for key in ("fire", "smoke", "stranger", "rubbish")):
+            raise ValueError("Invalid detection response")
+        return {
+            "pos": pos, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "exist_fire": data["fire"], "exist_smoke": data["smoke"],
+            "exist_stranger": data["stranger"], "exist_rubbish": data["rubbish"],
+            "filename": str(path),
         }
+    except (requests.RequestException, ValueError, OSError) as exc:
+        logger.warning("Image upload failed: %s", type(exc).__name__)
+        return None
 
-        # folder = f"/tmp/report/{time.strftime('%Y-%m-%d')}"
-        # if not os.path.exists(folder):
-        #     os.makedirs(folder)
-        # with open(f"{folder}/detect_result.json", "w") as f:
-        #     f.write(json.dumps(result_dict))
-
-        return result_dict
-
-    except Exception as e:
-        print(f"Error in img_send: {e}")
-        return 0
-      
 
 if __name__ == "__main__":
-    upload_loop()
+    logging.basicConfig(level=logging.INFO)
+    try:
+        upload_loop()
+    except KeyboardInterrupt:
+        pass
